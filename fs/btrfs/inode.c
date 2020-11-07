@@ -773,6 +773,7 @@ retry:
 					 async_extent->ram_size - 1);
 
 			/* allocate blocks */
+			// @
 			ret = cow_file_range(inode, async_cow->locked_page,
 					     async_extent->start,
 					     async_extent->start +
@@ -1052,7 +1053,14 @@ static noinline int cow_file_range(struct inode *inode,
 		if (btrfs_dedupe_hash_hit(hash)) {
 			ins.objectid = hash->bytenr;
 			ins.offset = hash->num_bytes;
-		} else {
+			if(hash->type==1)
+			{
+				// @ ins 's type BTRFS_EXTENT_ITEM_KEY
+				// @明天研究一下数据分布，然后用readpage把这个offset给读出来，然后生产burst
+				// burst_gen(hash->bytenr,hash->num_bytes,,hash->burst_index);
+			}
+		} 
+		else {
 			ret = btrfs_reserve_extent(root, cur_alloc_size,
 					   cur_alloc_size,
 					   fs_info->sectorsize, 0, alloc_hint,
@@ -1185,6 +1193,7 @@ out_unlock:
 	goto out;
 }
 
+// @ process hash
 static int hash_file_ranges(struct inode *inode, u64 start, u64 end,
 			    struct async_cow *async_cow, int *num_added)
 {

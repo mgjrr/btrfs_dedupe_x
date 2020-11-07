@@ -18,7 +18,10 @@ struct inmem_hash {
 	u64 bytenr;
 	u32 num_bytes;
 
+	u8 type; 
+	u64 burst_index;
 	u8 hash[];
+	u8 hash_h[];
 };
 
 static inline struct inmem_hash *inmem_alloc_hash(u16 algo)
@@ -108,7 +111,14 @@ init_dedupe_info(struct btrfs_ioctl_dedupe_args *dargs)
 	dedupe_info->hash_root = RB_ROOT;
 	dedupe_info->bytenr_root = RB_ROOT;
 	dedupe_info->current_nr = 0;
+	dedupe_info->hash_root = RB_ROOT;
+	dedupe_info->bytenr_root = RB_ROOT;
 	INIT_LIST_HEAD(&dedupe_info->lru_list);
+
+	dedupe_info->hash_root_h = RB_ROOT;
+	dedupe_info->bytenr_root_h = RB_ROOT;
+	dedupe_info->head_length = 1024;
+
 	mutex_init(&dedupe_info->lock);
 
 	return dedupe_info;
@@ -283,6 +293,8 @@ int btrfs_dedupe_reconfigure(struct btrfs_fs_info *fs_info,
 	return btrfs_dedupe_enable(fs_info, dargs);
 }
 
+// @ support insert in different tree.
+// @ hash holds two message
 static int inmem_insert_hash(struct rb_root *root,
 			     struct inmem_hash *hash, int hash_len)
 {
@@ -384,6 +396,24 @@ static int inmem_add(struct btrfs_dedupe_info *dedupe_info,
 		ret = 0;
 		goto out;
 	}
+
+	{
+		ihash->type = 1;
+		ret = inmem_insert_hash(&dedupe_info->hash_root_h, ihash,
+				btrfs_hash_sizes[algo]);
+		if (ret > 0) {
+			/*
+			* We only keep one hash in tree to save memory, so if
+			* hash conflicts, free the one to insert.
+			*/
+			rb_erase(&ihash->bytenr_node, &dedupe_info->bytenr_root);
+			kfree(ihash);
+			ret = 0;
+			goto out;
+		}
+	}
+
+
 
 	list_add(&ihash->lru_list, &dedupe_info->lru_list);
 	dedupe_info->current_nr++;
@@ -597,6 +627,33 @@ inmem_search_hash(struct btrfs_dedupe_info *dedupe_info, u8 *hash)
 			return entry;
 		}
 	}
+	// @ add search for head
+	{
+		struct rb_node **p = &dedupe_info->hash_root_h.rb_node;
+		struct rb_node *parent = NULL;
+		struct inmem_hash *entry = NULL;
+		u16 hash_algo = dedupe_info->hash_algo;
+		int hash_len = btrfs_hash_sizes[hash_algo];
+
+		while (*p) {
+			parent = *p;
+			entry = rb_entry(parent, struct inmem_hash, hash_node);
+
+			if (memcmp(hash, entry->hash, hash_len) < 0) {
+				p = &(*p)->rb_left;
+			} else if (memcmp(hash, entry->hash, hash_len) > 0) {
+				p = &(*p)->rb_right;
+			} else {
+				// @ forbid this won't make trouble?
+				/* Found, need to re-add it to LRU list head */
+				// list_del(&entry->lru_list);
+				// list_add(&entry->lru_list, &dedupe_info->lru_list);
+
+				return entry;
+			}
+		}
+	}
+
 	return NULL;
 }
 
@@ -651,12 +708,14 @@ again:
 	mutex_lock(&dedupe_info->lock);
 	found_hash = inmem_search_hash(dedupe_info, hash->hash);
 	/* If we don't find a duplicated extent, just return. */
+	//@ add in the only place
 	if (!found_hash) {
 		ret = 0;
 		goto out;
 	}
 	bytenr = found_hash->bytenr;
 	num_bytes = found_hash->num_bytes;
+	hash->type = found_hash->type;
 
 	btrfs_init_delayed_ref_head(insert_head, insert_qrecord, bytenr,
 			num_bytes, ref_root, 0, BTRFS_ADD_DELAYED_REF, true,
@@ -806,12 +865,29 @@ int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
 
 	shash->tfm = tfm;
 	shash->flags = 0;
+	
 	ret = crypto_shash_init(shash);
 	if (ret)
 		return ret;
+	// @ for head
+	{
+		char *d;
+		p = find_get_page(inode->i_mapping,
+				  (start >> PAGE_SHIFT));
+		if (WARN_ON(!p))
+			return -ENOENT;
+		d = kmap(p);
+		ret = crypto_shash_update(shash, d, dedupe_info->head_len);
+		kunmap(p);
+		put_page(p);
+		if (ret)
+			return ret;
+		ret = crypto_shash_final(shash, hash->hash_h);
+	}
+	else
 	for (i = 0; sectorsize * i < dedupe_bs; i++) {
 		char *d;
-
+		// @ watch this!
 		p = find_get_page(inode->i_mapping,
 				  (start >> PAGE_SHIFT) + i);
 		if (WARN_ON(!p))

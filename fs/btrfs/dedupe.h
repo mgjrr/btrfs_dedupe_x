@@ -21,10 +21,18 @@ struct btrfs_dedupe_hash {
 	u64 bytenr;
 	u32 num_bytes;
 
+
+	u8 type; 
+	u64 burst_index;
 	/* last field is a variable length array of dedupe hash */
 	u8 hash[];
+	u8 hash_h[];
 };
 
+struct burst{
+	char * ptr;
+	u64 len;
+}
 struct btrfs_dedupe_info {
 	/* dedupe blocksize */
 	u64 blocksize;
@@ -46,11 +54,15 @@ struct btrfs_dedupe_info {
 
 	struct rb_root hash_root_h;
 	struct rb_root bytenr_root_h;
+	int head_len;
+	struct burst * burst_arr;
 
 	struct list_head lru_list;
 	u64 limit_nr;
 	u64 current_nr;
 };
+
+static char * burst_gen()
 
 static inline u64 btrfs_dedupe_blocksize(struct btrfs_inode *inode)
 {
@@ -71,11 +83,16 @@ static inline int btrfs_dedupe_hash_hit(struct btrfs_dedupe_hash *hash)
 	return (hash && hash->bytenr);
 }
 
+// static inline int btrfs_dedupe_hash_hit(struct btrfs_dedupe_hash *hash)
+// {
+// 	return (hash && hash->bytenr);
+// }
+
 static inline int btrfs_dedupe_hash_size(u16 algo)
 {
 	if (WARN_ON(algo >= ARRAY_SIZE(btrfs_hash_sizes)))
 		return -EINVAL;
-	return sizeof(struct btrfs_dedupe_hash) + btrfs_hash_sizes[algo];
+	return sizeof(struct btrfs_dedupe_hash) + btrfs_hash_sizes[algo]+btrfs_hash_sizes[algo];
 }
 
 static inline struct btrfs_dedupe_hash *btrfs_dedupe_alloc_hash(u16 algo)
@@ -141,6 +158,10 @@ int btrfs_dedupe_cleanup(struct btrfs_fs_info *fs_info);
  * (error from hash codes)
  */
 int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
+			   struct inode *inode, u64 start,
+			   struct btrfs_dedupe_hash *hash);
+
+int btrfs_dedupe_calc_hash_head(struct btrfs_fs_info *fs_info,
 			   struct inode *inode, u64 start,
 			   struct btrfs_dedupe_hash *hash);
 
