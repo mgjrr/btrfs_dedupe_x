@@ -25,14 +25,15 @@ struct btrfs_dedupe_hash {
 	u8 type; 
 	u64 burst_index;
 	/* last field is a variable length array of dedupe hash */
-	u8 hash[];
-	u8 hash_h[];
+	// @ fixed to sha256
+	u8 hash[32];
+	u8 hash_h[32];
 };
 
 struct burst{
 	char * ptr;
 	u64 len;
-}
+};
 struct btrfs_dedupe_info {
 	/* dedupe blocksize */
 	u64 blocksize;
@@ -62,7 +63,7 @@ struct btrfs_dedupe_info {
 	u64 current_nr;
 };
 
-static char * burst_gen()
+char * burst_gen(struct page *);
 
 static inline u64 btrfs_dedupe_blocksize(struct btrfs_inode *inode)
 {

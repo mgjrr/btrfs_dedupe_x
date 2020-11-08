@@ -20,15 +20,15 @@ struct inmem_hash {
 
 	u8 type; 
 	u64 burst_index;
-	u8 hash[];
-	u8 hash_h[];
+	u8 hash[32];
+	u8 hash_h[32];
 };
 
 static inline struct inmem_hash *inmem_alloc_hash(u16 algo)
 {
 	if (WARN_ON(algo >= ARRAY_SIZE(btrfs_hash_sizes)))
 		return NULL;
-	return kzalloc(sizeof(struct inmem_hash) + btrfs_hash_sizes[algo],
+	return kzalloc(sizeof(struct inmem_hash) + btrfs_hash_sizes[algo] + btrfs_hash_sizes[algo],
 			GFP_NOFS);
 }
 
@@ -117,7 +117,7 @@ init_dedupe_info(struct btrfs_ioctl_dedupe_args *dargs)
 
 	dedupe_info->hash_root_h = RB_ROOT;
 	dedupe_info->bytenr_root_h = RB_ROOT;
-	dedupe_info->head_length = 1024;
+	dedupe_info->head_len = 1024;
 
 	mutex_init(&dedupe_info->lock);
 
@@ -884,7 +884,6 @@ int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
 			return ret;
 		ret = crypto_shash_final(shash, hash->hash_h);
 	}
-	else
 	for (i = 0; sectorsize * i < dedupe_bs; i++) {
 		char *d;
 		// @ watch this!
