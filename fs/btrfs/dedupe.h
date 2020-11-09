@@ -8,7 +8,7 @@
 
 #include <crypto/hash.h>
 #include "btrfs_inode.h"
-
+ 
 /* 32 bytes for SHA256 */
 static const int btrfs_hash_sizes[] = { 32 };
 
@@ -30,6 +30,7 @@ struct btrfs_dedupe_hash {
 	u8 hash_h[32];
 };
 
+u64 hash_value_calc(u8 * hash);
 struct burst{
 	char * ptr;
 	u64 len;
@@ -54,7 +55,6 @@ struct btrfs_dedupe_info {
 	struct rb_root bytenr_root;
 
 	struct rb_root hash_root_h;
-	struct rb_root bytenr_root_h;
 	int head_len;
 	struct burst * burst_arr;
 

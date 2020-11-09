@@ -48,7 +48,7 @@
 
 struct btrfs_iget_args {
 	struct btrfs_key *location;
-	struct btrfs_root *root;
+	struct btrfs_root *root; 
 };
 
 struct btrfs_dio_data {
@@ -1053,8 +1053,10 @@ static noinline int cow_file_range(struct inode *inode,
 		if (btrfs_dedupe_hash_hit(hash)) {
 			ins.objectid = hash->bytenr;
 			ins.offset = hash->num_bytes;
+			PDebug("hash hit at %d %d\n",hash->bytenr,hash->num_bytes);
 			if(hash->type==1)
 			{
+				PDebug("head hash hit.");
 				// @ ins 's type BTRFS_EXTENT_ITEM_KEY
 				// @明天研究一下数据分布，然后用readpage把这个offset给读出来，然后生产burst
 				// burst_gen(hash->bytenr,hash->num_bytes,,hash->burst_index);
@@ -1225,6 +1227,9 @@ static int hash_file_ranges(struct inode *inode, u64 start, u64 end,
 			goto next;
 
 		hash = btrfs_dedupe_alloc_hash(hash_algo);
+		{
+			PDebug("Hash alloced size: %u,%p,%p,%llu,%llu\n",sizeof(*hash),hash->hash,hash->hash_h,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
+		}
 		if (!hash) {
 			ret = -ENOMEM;
 			goto out;

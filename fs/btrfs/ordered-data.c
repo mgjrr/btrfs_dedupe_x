@@ -214,9 +214,13 @@ static int __btrfs_add_ordered_extent(struct inode *inode, u64 file_offset,
 			kmem_cache_free(btrfs_ordered_extent_cache, entry);
 			return -ENOMEM;
 		}
+		// @ add the same.
 		entry->hash->bytenr = hash->bytenr;
 		entry->hash->num_bytes = hash->num_bytes;
+		entry->hash->burst_index = hash->burst_index;
 		memcpy(entry->hash->hash, hash->hash,
+		       btrfs_hash_sizes[dedupe_info->hash_algo]);
+		memcpy(entry->hash->hash_h, hash->hash_h,
 		       btrfs_hash_sizes[dedupe_info->hash_algo]);
 	}
 

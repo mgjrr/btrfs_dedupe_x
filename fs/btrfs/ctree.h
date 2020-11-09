@@ -3286,6 +3286,8 @@ void btrfs_no_printk(const struct btrfs_fs_info *fs_info, const char *fmt, ...)
 {
 }
 
+#define PDebug(fmt, args...) printk("PDebug: %s:%d:%s(): " fmt, __FILE__, __LINE__, __func__, ##args)
+
 #ifdef CONFIG_PRINTK
 __printf(2, 3)
 __cold
