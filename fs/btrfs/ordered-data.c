@@ -200,7 +200,7 @@ static int __btrfs_add_ordered_extent(struct inode *inode, u64 file_offset,
 	 * We must handle this even if another process is trying to
 	 * turn off dedupe, otherwise we will leak a reference.
 	 */
-	if (hash && (hash->bytenr || root->fs_info->dedupe_enabled)) {
+	if (btrfs_dedupe_hash_hit(hash)) {
 		struct btrfs_dedupe_info *dedupe_info;
 
 		dedupe_info = root->fs_info->dedupe_info;
@@ -215,13 +215,13 @@ static int __btrfs_add_ordered_extent(struct inode *inode, u64 file_offset,
 			return -ENOMEM;
 		}
 		// @ add the same.
-		entry->hash->bytenr = hash->bytenr;
-		entry->hash->num_bytes = hash->num_bytes;
-		entry->hash->burst_index = hash->burst_index;
-		memcpy(entry->hash->hash, hash->hash,
-		       btrfs_hash_sizes[dedupe_info->hash_algo]);
-		memcpy(entry->hash->hash_h, hash->hash_h,
-		       btrfs_hash_sizes[dedupe_info->hash_algo]);
+		int i=0;
+		for(i=0;i<3;++i)
+		{
+			entry->hash->hash_arr[i]->bytenr = hash->hash_arr[i]->bytenr;
+			entry->hash->hash_arr[i]->num_bytes = hash->hash_arr[i]->num_bytes;
+			memcpy(entry->hash->hash_arr[i]->hash, hash->hash_arr[i]->hash, btrfs_hash_sizes[dedupe_info->hash_algo]);
+		}
 	}
 
 	if (type != BTRFS_ORDERED_IO_DONE && type != BTRFS_ORDERED_COMPLETE)

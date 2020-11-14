@@ -376,6 +376,7 @@ static noinline int add_async_extent(struct async_cow *cow,
 				     int compress_type,
 				     struct btrfs_dedupe_hash *hash)
 {
+	{ PDebug("add time hash %p\n",hash);}
 	struct async_extent *async_extent;
 
 	async_extent = kmalloc(sizeof(*async_extent), GFP_NOFS);
@@ -1051,15 +1052,21 @@ static noinline int cow_file_range(struct inode *inode,
 	while (num_bytes > 0) {
 		cur_alloc_size = num_bytes;
 		if (btrfs_dedupe_hash_hit(hash)) {
-			ins.objectid = hash->bytenr;
-			ins.offset = hash->num_bytes;
-			PDebug("hash hit at %d %d\n",hash->bytenr,hash->num_bytes);
-			if(hash->type==1)
+			int i;
+			for(i=0;i<3;++i)
 			{
-				PDebug("head hash hit.");
-				// @ ins 's type BTRFS_EXTENT_ITEM_KEY
-				// @明天研究一下数据分布，然后用readpage把这个offset给读出来，然后生产burst
-				// burst_gen(hash->bytenr,hash->num_bytes,,hash->burst_index);
+				PDebug("hash hit at %d %d\n",i,hash->hash_arr[i]->bytenr);
+				if(hash->hash_arr[i]->bytenr)
+				{
+					ins.objectid = hash->hash_arr[i]->bytenr;
+					ins.offset = hash->hash_arr[i]->num_bytes;
+				}
+				if(i>0)
+				{
+					PDebug("head hash hit.");
+					// burst_gen();
+				}
+				break;
 			}
 		} 
 		else {
@@ -1227,9 +1234,9 @@ static int hash_file_ranges(struct inode *inode, u64 start, u64 end,
 			goto next;
 
 		hash = btrfs_dedupe_alloc_hash(hash_algo);
-		{
-			PDebug("Hash alloced size: %u,%p,%p,%llu,%llu\n",sizeof(*hash),hash->hash,hash->hash_h,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
-		}
+		// {
+		// 	PDebug("Hash alloced size: %u,%p,%p,%llu,%llu\n",sizeof(*hash),hash->hash,hash->hash_h,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
+		// }
 		if (!hash) {
 			ret = -ENOMEM;
 			goto out;
@@ -2414,6 +2421,8 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       u16 other_encoding, int extent_type,
 				       struct btrfs_dedupe_hash *hash)
 {
+	{ PDebug("1 %p\n",hash);
+	}
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_file_extent_item *fi;
 	struct btrfs_path *path;
@@ -2501,9 +2510,26 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 	}
 
 	/* Add missed hash into dedupe tree */
-	if (hash && hash->bytenr == 0) {
-		hash->bytenr = ins.objectid;
-		hash->num_bytes = ins.offset;
+	if (hash&&!btrfs_dedupe_hash_hit(hash)) {
+		{ PDebug("1");}
+		int i;
+		for(i=0;i<3;++i)
+		{
+			// if(WARN_ON(!hash))
+			// {
+			// 	PDebug("empty hash");
+			// 	break;
+			// }
+			// if(WARN_ON(!hash->hash_arr[i]))
+			// {
+			// 	PDebug("empty hash arr");
+			// 	break;
+			// }
+			// PDebug("%p %p\n",hash,hash->hash_arr[i]);
+			hash->hash_arr[i]->bytenr = ins.objectid;
+			hash->hash_arr[i]->num_bytes = ins.offset;
+		}
+		
 
 		/*
 		 * Here we ignore dedupe_add error, as even it failed,
@@ -3181,6 +3207,7 @@ static void btrfs_release_delalloc_bytes(struct btrfs_fs_info *fs_info,
  */
 static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 {
+	{ PDebug("1 oe %p h %p\n",ordered_extent,ordered_extent->hash);}
 	struct inode *inode = ordered_extent->inode;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_root *root = BTRFS_I(inode)->root;

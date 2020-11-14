@@ -22,9 +22,14 @@ u64 hash_value_calc(u8 * hash)
 }
 
 struct inmem_hash {
-	struct rb_node hash_node;
-	struct rb_node hash_h_node;
 	struct rb_node bytenr_node;
+	u64 bytenr;
+	u32 num_bytes;
+	struct inmem_hash_entry * hash_arr[3];
+};
+
+struct inmem_hash_entry {
+	struct rb_node hash_node;
 	struct list_head lru_list;
 
 	u64 bytenr;
@@ -33,15 +38,23 @@ struct inmem_hash {
 	u8 type; 
 	u64 burst_index;
 	u8 hash[32];
-	u8 hash_h[32];
 };
 
 static inline struct inmem_hash *inmem_alloc_hash(u16 algo)
 {
+	// @ remember to destroy, avoid from memory leak.
+	struct inmem_hash_entry * tmp[3];
+	struct inmem_hash * hs = kzalloc(sizeof(struct inmem_hash), GFP_NOFS);
+	int i;
+	for(i = 0;i<3;++i)
+	{
+		tmp[i] =  kzalloc(sizeof(struct inmem_hash_entry) + btrfs_hash_sizes[algo],GFP_NOFS);
+		hs->hash_arr[i] = tmp[i];
+	}
+
 	if (WARN_ON(algo >= ARRAY_SIZE(btrfs_hash_sizes)))
 		return NULL;
-	return kzalloc(sizeof(struct inmem_hash) + btrfs_hash_sizes[algo] + btrfs_hash_sizes[algo],
-			GFP_NOFS);
+	return hs;
 }
 
 /*
@@ -74,8 +87,8 @@ static void get_dedupe_status(struct btrfs_dedupe_info *dedupe_info,
 	}
 
 	/* current_nr doesn't makes sense for reconfig case */
-	if (!reconf)
-		dargs->current_nr = dedupe_info->current_nr;
+	// if (!reconf)
+	// 	dargs->current_nr = dedupe_info->current_nr;
 }
 
 void btrfs_dedupe_status(struct btrfs_fs_info *fs_info,
@@ -103,7 +116,7 @@ static struct btrfs_dedupe_info *
 init_dedupe_info(struct btrfs_ioctl_dedupe_args *dargs)
 {
 	struct btrfs_dedupe_info *dedupe_info;
-
+	int i;
 	dedupe_info = kzalloc(sizeof(*dedupe_info), GFP_NOFS);
 	if (!dedupe_info)
 		return ERR_PTR(-ENOMEM);
@@ -119,14 +132,13 @@ init_dedupe_info(struct btrfs_ioctl_dedupe_args *dargs)
 		kfree(dedupe_info);
 		return ERR_CAST(dedupe_info->dedupe_driver);
 	}
-
-	dedupe_info->hash_root = RB_ROOT;
+	for(i =0;i<3;++i) 
+	{
+		dedupe_info->hash_root[i] = RB_ROOT;
+		INIT_LIST_HEAD(&dedupe_info->lru_list[i]);
+		dedupe_info->current_nr[i] = 0;
+	}
 	dedupe_info->bytenr_root = RB_ROOT;
-	dedupe_info->current_nr = 0;
-
-	INIT_LIST_HEAD(&dedupe_info->lru_list);
-
-	dedupe_info->hash_root_h = RB_ROOT;
 	dedupe_info->head_len = 1024;
 
 	mutex_init(&dedupe_info->lock);
@@ -285,7 +297,9 @@ int btrfs_dedupe_enable(struct btrfs_fs_info *fs_info,
 			struct btrfs_ioctl_dedupe_args *dargs)
 {
 	int ret = 0;
-
+	{
+		PDebug("dedupe enabled\n");
+	}
 	ret = check_dedupe_parameter(fs_info, dargs);
 	if (ret < 0)
 		return ret;
@@ -306,72 +320,78 @@ int btrfs_dedupe_reconfigure(struct btrfs_fs_info *fs_info,
 // @ support insert in different tree.
 // @ hash holds two message
 static int inmem_insert_hash(struct btrfs_dedupe_info *dedupe_info,
-			     struct inmem_hash *hash, int hash_len)
+			     struct inmem_hash *Hash, int hash_len)
 {
-
-	int ret = 0;
-	struct rb_node **p = &(dedupe_info->hash_root.rb_node);
-	struct rb_node *parent = NULL;
-	struct inmem_hash *entry = NULL;
+	int i,ret = 0;
+	for (i =0 ;i<3;++i)
 	{
-		PDebug("Insert into full tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
-	}
-
-	while (*p) {
-		parent = *p;
-		entry = rb_entry(parent, struct inmem_hash, hash_node);
-		if (memcmp(hash->hash, entry->hash, hash_len) < 0)
-			p = &(*p)->rb_left;
-		else if (memcmp(hash->hash, entry->hash, hash_len) > 0)
-			p = &(*p)->rb_right;
-		else
-		{
-			ret += 1;
-			break;
-		}
-	}
-	rb_link_node(&hash->hash_node, parent, p);
-	rb_insert_color(&hash->hash_node, &dedupe_info->hash_root);
-
-	{
-		PDebug("Insert into head tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
-
-		struct rb_node **p = &(dedupe_info->hash_root_h.rb_node);
+		struct rb_node **p = &(dedupe_info->hash_root[i].rb_node);
 		struct rb_node *parent = NULL;
-		struct inmem_hash *entry = NULL;
+		struct inmem_hash_entry *entry = NULL;
+		struct inmem_hash_entry *hash = Hash->hash_arr[i];
+		{
+			PDebug("Insert into %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
+		}
 
 		while (*p) {
 			parent = *p;
-			entry = rb_entry(parent, struct inmem_hash, hash_h_node);
-			if (memcmp(hash->hash_h, entry->hash_h, hash_len) < 0)
+			entry = rb_entry(parent, struct inmem_hash_entry, hash_node);
+			if (memcmp(hash->hash, entry->hash, hash_len) < 0)
 				p = &(*p)->rb_left;
-			else if (memcmp(hash->hash_h, entry->hash_h, hash_len) > 0)
+			else if (memcmp(hash->hash, entry->hash, hash_len) > 0)
 				p = &(*p)->rb_right;
 			else
 			{
-				ret += 2;
+				ret += 1;
 				break;
 			}
 		}
-		rb_link_node(&hash->hash_h_node, parent, p);
-		rb_insert_color(&hash->hash_h_node, &dedupe_info->hash_root_h);
-
-		{ 
-			if(p)
-				PDebug("p:%p *p:%p\n",p,*p);
-			else
-				PDebug("p null.\n");
-
-			if(&hash->hash_h_node)
-				PDebug("&hash->hash_h_node:%p\n",&hash->hash_h_node);
-			else
-				PDebug("&hash->hash_h_node null.\n");
-			
-			PDebug("Insert result in head tree, hashv: %lld\n",hash_value_calc(hash->hash_h)); }
-		// {
-		// 	PDebug("Insert into head tree entryP: %p after: %p hash:%llu hash_h: %llu\n",&hash->hash_h_node, *p,hash_value_calc(*p->hash),hash_value_calc(hash->hash_h));
-		// }
+		rb_link_node(&hash->hash_node, parent, p);
+		rb_insert_color(&hash->hash_node, &dedupe_info->hash_root[i]);
+		
 	}
+	// int ret = 0;
+	
+
+	// {
+	// 	PDebug("Insert into head tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
+
+	// 	struct rb_node **p = &(dedupe_info->hash_root_h.rb_node);
+	// 	struct rb_node *parent = NULL;
+	// 	struct inmem_hash *entry = NULL;
+
+	// 	while (*p) {
+	// 		parent = *p;
+	// 		entry = rb_entry(parent, struct inmem_hash, hash_h_node);
+	// 		if (memcmp(hash->hash_h, entry->hash_h, hash_len) < 0)
+	// 			p = &(*p)->rb_left;
+	// 		else if (memcmp(hash->hash_h, entry->hash_h, hash_len) > 0)
+	// 			p = &(*p)->rb_right;
+	// 		else
+	// 		{
+	// 			ret += 2;
+	// 			break;
+	// 		}
+	// 	}
+	// 	rb_link_node(&hash->hash_h_node, parent, p);
+	// 	rb_insert_color(&hash->hash_h_node, &dedupe_info->hash_root_h);
+
+	// 	{ 
+	// 		if(p)
+	// 			PDebug("p:%p *p:%p\n",p,*p);
+	// 		else
+	// 			PDebug("p null.\n");
+
+	// 		if(&hash->hash_h_node)
+	// 			PDebug("&hash->hash_h_node:%p\n",&hash->hash_h_node);
+	// 		else
+	// 			PDebug("&hash->hash_h_node null.\n");
+			
+	// 		PDebug("Insert result in head tree, hashv: %lld\n",hash_value_calc(hash->hash_h)); }
+	// 	// {
+	// 	// 	PDebug("Insert into head tree entryP: %p after: %p hash:%llu hash_h: %llu\n",&hash->hash_h_node, *p,hash_value_calc(*p->hash),hash_value_calc(hash->hash_h));
+	// 	// }
+	// }
 	return ret;
 }
 
@@ -400,17 +420,33 @@ static int inmem_insert_bytenr(struct rb_root *root,
 static void __inmem_del(struct btrfs_dedupe_info *dedupe_info,
 			struct inmem_hash *hash)
 {
-	list_del(&hash->lru_list);
-	rb_erase(&hash->hash_node, &dedupe_info->hash_root);
-	rb_erase(&hash->hash_h_node, &dedupe_info->hash_root);
+	//@ when?
+	int i;
+	for(i =0 ;i<3;++i)
+	{
+		list_del(&hash->hash_arr[i]->lru_list);
+		if (!WARN_ON(dedupe_info->current_nr == 0))
+			dedupe_info->current_nr[i]--;
+		rb_erase(&hash->hash_arr[i]->hash_node, &dedupe_info->hash_root[i]);
+	}
 	rb_erase(&hash->bytenr_node, &dedupe_info->bytenr_root);
-
-	if (!WARN_ON(dedupe_info->current_nr == 0))
-		dedupe_info->current_nr--;
-
+	// @ not kfree.
 	kfree(hash);
 }
 
+static void __inmem_del_indiv(struct btrfs_dedupe_info *dedupe_info,
+			struct inmem_hash_entry *hash,int p)
+{
+	//@ when?
+
+	list_del(&hash->lru_list);
+	if (!WARN_ON(dedupe_info->current_nr == 0))
+		dedupe_info->current_nr[p]--;
+	rb_erase(&hash->hash_node, &dedupe_info->hash_root[p]);
+	// rb_erase(&hash->bytenr_node, &dedupe_info->bytenr_root);
+	// @ not kfree.
+	kfree(hash);
+}
 /*
  * Insert a hash into in-memory dedupe tree
  * Will remove exceeding last recent use hash.
@@ -422,33 +458,27 @@ static int inmem_add(struct btrfs_dedupe_info *dedupe_info,
 		     struct btrfs_dedupe_hash *hash)
 {
 	int ret = 0;
+	int i =0;
 	u16 algo = dedupe_info->hash_algo;
 	struct inmem_hash *ihash;
 
-	ihash = inmem_alloc_hash(algo);
+	ihash = kzalloc(sizeof(struct inmem_hash), GFP_NOFS);
 	if (!ihash)
 		return -ENOMEM;
 
 	/* Copy the data out */
-	ihash->bytenr = hash->bytenr;
-	ihash->num_bytes = hash->num_bytes;
-	memcpy(ihash->hash, hash->hash, btrfs_hash_sizes[algo]);
-	if(!hash->hash_h)
+	for(i = 0;i<3;++i)
 	{
-		PDebug("null head hash\n");
+		ihash->hash_arr[i]->bytenr = hash->hash_arr[i]->bytenr;
+		ihash->hash_arr[i]->num_bytes = hash->hash_arr[i]->num_bytes;
+		memcpy(ihash->hash_arr[i]->hash, hash->hash_arr[i]->hash, btrfs_hash_sizes[algo]);
 	}
-	else
-	{
-		{
-		PDebug("head hash %p %llu\n",hash->hash_h,hash_value_calc(hash->hash_h));
-	}
-	}
-	memcpy(ihash->hash_h, hash->hash_h, btrfs_hash_sizes[algo]);
 
 	mutex_lock(&dedupe_info->lock);
 
 	ret = inmem_insert_bytenr(&dedupe_info->bytenr_root, ihash);
 	if (ret > 0) {
+		WARN_ON(ret>0);
 		kfree(ihash);
 		ret = 0;
 		goto out;
@@ -457,31 +487,33 @@ static int inmem_add(struct btrfs_dedupe_info *dedupe_info,
 	ret = inmem_insert_hash(dedupe_info, ihash,
 				btrfs_hash_sizes[algo]);
 	
-	if (ret > 0) {
+	WARN_ON(ret>0);
 		/*
 		 * We only keep one hash in tree to save memory, so if
 		 * hash conflicts, free the one to insert.
 		 */
-		rb_erase(&ihash->bytenr_node, &dedupe_info->bytenr_root);
-		kfree(ihash);
-		ret = 0;
-		goto out;
+	// 	rb_erase(&ihash->bytenr_node, &dedupe_info->bytenr_root);
+	// 	kfree(ihash);
+	// 	ret = 0;
+	// 	goto out;
+	// }
+
+	for(i=0;i<3;++i) {
+		list_add(&ihash->hash_arr[i]->lru_list, &dedupe_info->lru_list[i]);
+		dedupe_info->current_nr[i]++;
+		while (dedupe_info->current_nr[i] > dedupe_info->limit_nr) {
+			struct inmem_hash_entry *last;
+
+			last = list_entry(dedupe_info->lru_list[i].prev,
+					struct inmem_hash_entry, lru_list);
+			__inmem_del_indiv(dedupe_info, last,i);
+		}
 	}
 
 
-
-
-	list_add(&ihash->lru_list, &dedupe_info->lru_list);
-	dedupe_info->current_nr++;
 
 	/* Remove the last dedupe hash if we exceed limit */
-	while (dedupe_info->current_nr > dedupe_info->limit_nr) {
-		struct inmem_hash *last;
-
-		last = list_entry(dedupe_info->lru_list.prev,
-				  struct inmem_hash, lru_list);
-		__inmem_del(dedupe_info, last);
-	}
+	
 out:
 	mutex_unlock(&dedupe_info->lock);
 	return 0;
@@ -490,6 +522,7 @@ out:
 int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
 		     struct btrfs_dedupe_hash *hash)
 {
+	{ PDebug("1");}
 	struct btrfs_dedupe_info *dedupe_info = fs_info->dedupe_info;
 
 	if (!fs_info->dedupe_enabled || !hash)
@@ -502,7 +535,7 @@ int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
 		return -EINVAL;
 
 	/* ignore old hash */
-	if (dedupe_info->blocksize != hash->num_bytes)
+	if (dedupe_info->blocksize != hash->hash_arr[0]->num_bytes)
 		return 0;
 
 	if (dedupe_info->backend == BTRFS_DEDUPE_BACKEND_INMEMORY)
@@ -515,8 +548,9 @@ inmem_search_bytenr(struct btrfs_dedupe_info *dedupe_info, u64 bytenr)
 {
 	struct rb_node **p = &dedupe_info->bytenr_root.rb_node;
 	struct rb_node *parent = NULL;
-	struct inmem_hash *entry = NULL;
-
+	int i =0 ;
+	struct inmem_hash *hash = kzalloc(sizeof(struct inmem_hash), GFP_NOFS);
+	struct inmem_hash *entry;
 	while (*p) {
 		parent = *p;
 		entry = rb_entry(parent, struct inmem_hash, bytenr_node);
@@ -526,9 +560,12 @@ inmem_search_bytenr(struct btrfs_dedupe_info *dedupe_info, u64 bytenr)
 		else if (bytenr > entry->bytenr)
 			p = &(*p)->rb_right;
 		else
-			return entry;
+		{
+			for(i =0;i<3;++i)
+				hash->hash_arr[i] = entry->hash_arr[i];
+			return hash;
+		}
 	}
-
 	return NULL;
 }
 
@@ -567,11 +604,14 @@ int btrfs_dedupe_del(struct btrfs_fs_info *fs_info, u64 bytenr)
 
 static void inmem_destroy(struct btrfs_dedupe_info *dedupe_info)
 {
-	struct inmem_hash *entry, *tmp;
-
+	struct inmem_hash_entry *entry, *tmp;
+	int i;
 	mutex_lock(&dedupe_info->lock);
-	list_for_each_entry_safe(entry, tmp, &dedupe_info->lru_list, lru_list)
-		__inmem_del(dedupe_info, entry);
+	for(i=0;i<3;++i)
+	{
+		list_for_each_entry_safe(entry, tmp, &dedupe_info->lru_list[i], lru_list)
+			__inmem_del_indiv(dedupe_info, entry,i);
+	}
 	mutex_unlock(&dedupe_info->lock);
 }
 
@@ -659,68 +699,47 @@ int btrfs_dedupe_disable(struct btrfs_fs_info *fs_info)
 /*
  * Caller must ensure the corresponding ref head is not being run.
  */
-static struct inmem_hash *
-inmem_search_hash(struct btrfs_dedupe_info *dedupe_info, struct btrfs_dedupe_hash * hash)
+int 
+inmem_search_hash(struct btrfs_dedupe_info *dedupe_info, struct btrfs_dedupe_hash * Hash)
 {
-	struct rb_node **p = &dedupe_info->hash_root.rb_node;
-	struct rb_node *parent = NULL;
-	struct inmem_hash *entry = NULL;
-	u16 hash_algo = dedupe_info->hash_algo;
-	int hash_len = btrfs_hash_sizes[hash_algo];
-
+	int i,ret = 0;
+	for(i=0;i<3;++i)
 	{
-		PDebug("Search in full tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
-	}
-	while (*p) {
-		parent = *p;
-		entry = rb_entry(parent, struct inmem_hash, hash_node);
-
-		if (memcmp(hash->hash, entry->hash, hash_len) < 0) {
-			p = &(*p)->rb_left;
-		} else if (memcmp(hash->hash, entry->hash, hash_len) > 0) {
-			p = &(*p)->rb_right;
-		} else {
-			/* Found, need to re-add it to LRU list head */
-			{
-				PDebug("Found in full tree, hash:%llu \n",hash_value_calc(hash->hash));
-			}
-			list_del(&entry->lru_list);
-			list_add(&entry->lru_list, &dedupe_info->lru_list);
-			return entry;
-		}
-	}
-	{
-		PDebug("Search in head tree, hash:%lld\n",hash_value_calc(hash->hash));
-	}
-	// @ add search for head
-	{
-		struct rb_node **p = &dedupe_info->hash_root_h.rb_node;
+		struct rb_node **p = &dedupe_info->hash_root[i].rb_node;
 		struct rb_node *parent = NULL;
-		struct inmem_hash *entry = NULL;
+		struct inmem_hash_entry *entry = NULL;
+		struct btrfs_dedupe_hash_entry *hash = Hash->hash_arr[i];
+		u16 hash_algo = dedupe_info->hash_algo;
+		int hash_len = btrfs_hash_sizes[hash_algo];
 
+		{
+			PDebug("Search in %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
+		}
 		while (*p) {
 			parent = *p;
-			entry = rb_entry(parent, struct inmem_hash, hash_h_node);
-			{ PDebug("Traverse in head tree, nodeP %p, ,hashv: %lld %lld\n",parent,hash_value_calc(entry->hash_h),hash_value_calc(hash->hash_h)); }
+			entry = rb_entry(parent, struct inmem_hash_entry, hash_node);
 
-			if (memcmp(hash->hash_h, entry->hash_h, hash_len) < 0) {
+			if (memcmp(hash->hash, entry->hash, hash_len) < 0) {
 				p = &(*p)->rb_left;
-			} else if (memcmp(hash->hash_h, entry->hash_h, hash_len) > 0) {
+			} else if (memcmp(hash->hash, entry->hash, hash_len) > 0) {
 				p = &(*p)->rb_right;
 			} else {
-				// @ forbid this won't make trouble?
 				/* Found, need to re-add it to LRU list head */
-				// list_del(&entry->lru_list);
-				// list_add(&entry->lru_list, &dedupe_info->lru_list);
 				{
-					PDebug("Found in head tree, hash:%p\n",hash_value_calc(hash->hash_h));
+					PDebug("Found in %d tree, hash:%llu \n",i,hash_value_calc(hash->hash));
 				}
-				return entry;
+				list_del(&entry->lru_list);
+				list_add(&entry->lru_list, &dedupe_info->lru_list[i]);
+				hash->bytenr = entry->bytenr;
+				hash->num_bytes = entry->num_bytes;
+
+				ret=1;
+				goto ed;
 			}
 		}
 	}
-	
-	return NULL;
+	ed:
+	return ret;
 }
 
 static int inmem_search(struct btrfs_dedupe_info *dedupe_info,
@@ -735,7 +754,7 @@ static int inmem_search(struct btrfs_dedupe_info *dedupe_info,
 	struct btrfs_delayed_ref_head *insert_head;
 	struct btrfs_delayed_data_ref *insert_dref;
 	struct btrfs_qgroup_extent_record *insert_qrecord = NULL;
-	struct inmem_hash *found_hash;
+	int found_hash;
 	int free_insert = 1;
 	int qrecord_inserted = 0;
 	u64 ref_root = root->root_key.objectid;
@@ -773,7 +792,7 @@ static int inmem_search(struct btrfs_dedupe_info *dedupe_info,
 again:
 	mutex_lock(&dedupe_info->lock);
 	{
-		PDebug("Search in full tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu hash_h's p: %p\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h),hash->hash_h);
+		// PDebug("Search in full tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu hash_h's p: %p\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h),hash->hash_h);
 	}
 
 	found_hash = inmem_search_hash(dedupe_info, hash);
@@ -782,14 +801,14 @@ again:
 	//@ add in the only place
 	if (!found_hash) {
 		{
-			PDebug("Can't found in two tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
+			// PDebug("Can't found in two tree, bytenr:%d numbytes:%d hash:%llu hash_h: %llu\n",hash->bytenr,hash->num_bytes,hash_value_calc(hash->hash),hash_value_calc(hash->hash_h));
 		}
 		ret = 0;
 		goto out;
 	}
-	bytenr = found_hash->bytenr;
-	num_bytes = found_hash->num_bytes;
-	hash->type = found_hash->type;
+
+	bytenr = hash->hash_arr[0]->bytenr;
+	num_bytes = hash->hash_arr[0]->num_bytes;
 
 	btrfs_init_delayed_ref_head(insert_head, insert_qrecord, bytenr,
 			num_bytes, ref_root, 0, BTRFS_ADD_DELAYED_REF, true,
@@ -829,8 +848,8 @@ again:
 
 		/* add_delayed_data_ref_locked will free unused memory */
 		free_insert = 0;
-		hash->bytenr = bytenr;
-		hash->num_bytes = num_bytes;
+		// hash->bytenr = bytenr;
+		// hash->num_bytes = num_bytes;
 		ret = 1;
 		goto out;
 	}
@@ -854,8 +873,8 @@ again:
 		goto out;
 	}
 	ret = 1;
-	hash->bytenr = bytenr;
-	hash->num_bytes = num_bytes;
+	// hash->bytenr = bytenr;
+	// hash->num_bytes = num_bytes;
 
 	/*
 	 * Increase the extent ref right now, to avoid delayed ref run
@@ -903,10 +922,10 @@ int btrfs_dedupe_search(struct btrfs_fs_info *fs_info,
 		ret = inmem_search(dedupe_info, inode, file_pos, hash);
 
 	/* It's possible hash->bytenr/num_bytenr already changed */
-	if (ret == 0) {
-		hash->num_bytes = 0;
-		hash->bytenr = 0;
-	}
+	// if (ret == 0) {
+	// 	hash->num_bytes = 0;
+	// 	hash->bytenr = 0;
+	// }
 	return ret;
 }
 
@@ -954,7 +973,7 @@ int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
 		ret = crypto_shash_update(shash, d, dedupe_info->head_len);
 		kunmap(p);
 		put_page(p);
-		ret = crypto_shash_final(shash, hash->hash_h);
+		ret = crypto_shash_final(shash, hash->hash_arr[1]->hash);
 		if (ret)
 			return ret;
 		for(i=0;i<32;++i)
@@ -977,6 +996,25 @@ int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
 		if (ret)
 			return ret;
 	}
-	ret = crypto_shash_final(shash, hash->hash);
+	ret = crypto_shash_final(shash, hash->hash_arr[0]->hash);
+	{
+		// @ tail,offset error.
+		char *d;
+		p = find_get_page(inode->i_mapping,
+				  (start >> PAGE_SHIFT)+i-1);
+		if (WARN_ON(!p)) 
+			return -ENOENT;
+		d = kmap(p);
+		ret = crypto_shash_update(shash, d, dedupe_info->head_len);
+		kunmap(p);
+		put_page(p);
+		ret = crypto_shash_final(shash, hash->hash_arr[2]->hash);
+		if (ret)
+			return ret;
+		for(i=0;i<32;++i)
+		{
+			// printk("{%d} ",hash->hash_h[i]);
+		}
+	}
 	return ret;
 }

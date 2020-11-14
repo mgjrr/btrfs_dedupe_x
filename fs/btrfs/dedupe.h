@@ -17,7 +17,8 @@ static const int btrfs_hash_sizes[] = { 32 };
  *
  * Different dedupe backends should have their own hash structure
  */
-struct btrfs_dedupe_hash {
+
+ struct btrfs_dedupe_hash_entry {
 	u64 bytenr;
 	u32 num_bytes;
 
@@ -27,8 +28,13 @@ struct btrfs_dedupe_hash {
 	/* last field is a variable length array of dedupe hash */
 	// @ fixed to sha256
 	u8 hash[32];
-	u8 hash_h[32];
 };
+
+struct btrfs_dedupe_hash {
+	struct btrfs_dedupe_hash_entry * hash_arr[3];
+};
+
+
 
 u64 hash_value_calc(u8 * hash);
 struct burst{
@@ -51,16 +57,15 @@ struct btrfs_dedupe_info {
 	struct mutex lock;
 
 	/* following members are only used in in-memory backend */
-	struct rb_root hash_root;
+	struct rb_root hash_root[3];
 	struct rb_root bytenr_root;
-
-	struct rb_root hash_root_h;
+	
 	int head_len;
 	struct burst * burst_arr;
 
-	struct list_head lru_list;
+	struct list_head lru_list[3];
 	u64 limit_nr;
-	u64 current_nr;
+	u64 current_nr[3];
 };
 
 char * burst_gen(struct page *);
@@ -81,7 +86,17 @@ static inline int inode_need_dedupe(struct inode *inode)
 
 static inline int btrfs_dedupe_hash_hit(struct btrfs_dedupe_hash *hash)
 {
-	return (hash && hash->bytenr);
+	if(!hash) return 0;
+	int ret = 0,i;
+	for(i = 0;i<3;++i)
+	{
+		if(hash->hash_arr[i] && hash->hash_arr[i]->bytenr)
+		{
+			ret = 1;
+			break;
+		}
+	}
+	return ret;
 }
 
 // static inline int btrfs_dedupe_hash_hit(struct btrfs_dedupe_hash *hash)
@@ -93,12 +108,18 @@ static inline int btrfs_dedupe_hash_size(u16 algo)
 {
 	if (WARN_ON(algo >= ARRAY_SIZE(btrfs_hash_sizes)))
 		return -EINVAL;
-	return sizeof(struct btrfs_dedupe_hash) + btrfs_hash_sizes[algo]+btrfs_hash_sizes[algo];
+	return sizeof(struct btrfs_dedupe_hash_entry) + btrfs_hash_sizes[algo];
 }
 
 static inline struct btrfs_dedupe_hash *btrfs_dedupe_alloc_hash(u16 algo)
 {
-	return kzalloc(btrfs_dedupe_hash_size(algo), GFP_NOFS);
+	struct btrfs_dedupe_hash * hs = kzalloc(sizeof(struct btrfs_dedupe_hash), GFP_NOFS);
+	int i;
+	for(i = 0;i<3;++i)
+	{
+		hs->hash_arr[i] = kzalloc(btrfs_dedupe_hash_size(algo), GFP_NOFS);
+	}
+	return hs;
 }
 
 /*
