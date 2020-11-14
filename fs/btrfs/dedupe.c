@@ -535,8 +535,8 @@ int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
 		return -EINVAL;
 
 	/* ignore old hash */
-	if (dedupe_info->blocksize != hash->hash_arr[0]->num_bytes)
-		return 0;
+	//if (dedupe_info->blocksize != hash->hash_arr[0]->num_bytes)
+	//	return 0;
 
 	if (dedupe_info->backend == BTRFS_DEDUPE_BACKEND_INMEMORY)
 		return inmem_add(dedupe_info, hash);

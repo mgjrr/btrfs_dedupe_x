@@ -200,7 +200,7 @@ static int __btrfs_add_ordered_extent(struct inode *inode, u64 file_offset,
 	 * We must handle this even if another process is trying to
 	 * turn off dedupe, otherwise we will leak a reference.
 	 */
-	if (btrfs_dedupe_hash_hit(hash)) {
+	if (hash && (btrfs_dedupe_hash_hit(hash) || root->fs_info->dedupe_enabled)) {
 		struct btrfs_dedupe_info *dedupe_info;
 
 		dedupe_info = root->fs_info->dedupe_info;
