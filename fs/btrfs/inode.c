@@ -1065,7 +1065,18 @@ static noinline int cow_file_range(struct inode *inode,
 				if(i>0)
 				{
 					PDebug("head hash hit.");
-					// burst_gen();
+					struct extent_buffer * eb = btrfs_find_create_tree_block(fs_info,ins.objectid);
+					if(WARN_ON(!eb))
+					{
+						PDebug("no eb..");
+					}
+					else
+					{
+						// char buf[17000];
+						// memset(buf,0,sizeof(buf));
+						// read_extent_buffer(eb,buf,0,16384);
+						// PDebug("read: %d %c%c%c\n",ins.objectid,buf[0],buf[1023],buf[1024]);
+					}// burst_gen();
 				}
 				break;
 			}
