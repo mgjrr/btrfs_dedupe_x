@@ -1055,6 +1055,7 @@ static noinline int cow_file_range(struct inode *inode,
 			int i;
 			for(i=0;i<3;++i)
 			{
+				if(!hash->hash_arr[i]->bytenr) continue;
 				PDebug("hash hit at %d %d\n",i,hash->hash_arr[i]->bytenr);
 				if(hash->hash_arr[i]->bytenr)
 				{
@@ -2421,7 +2422,7 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       u16 other_encoding, int extent_type,
 				       struct btrfs_dedupe_hash *hash)
 {
-	{ PDebug("1 %p\n",hash);
+	{ PDebug("1 %p %d\n",hash,btrfs_dedupe_hash_hit(hash));
 	}
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_file_extent_item *fi;

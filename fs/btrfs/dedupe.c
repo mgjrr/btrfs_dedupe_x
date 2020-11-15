@@ -462,13 +462,17 @@ static int inmem_add(struct btrfs_dedupe_info *dedupe_info,
 	u16 algo = dedupe_info->hash_algo;
 	struct inmem_hash *ihash;
 
-	ihash = kzalloc(sizeof(struct inmem_hash), GFP_NOFS);
+	ihash = inmem_alloc_hash(algo);
 	if (!ihash)
 		return -ENOMEM;
 
 	/* Copy the data out */
 	for(i = 0;i<3;++i)
 	{
+		if(WARN_ON(!hash->hash_arr[i]))
+		{
+			continue;
+		}
 		ihash->hash_arr[i]->bytenr = hash->hash_arr[i]->bytenr;
 		ihash->hash_arr[i]->num_bytes = hash->hash_arr[i]->num_bytes;
 		memcpy(ihash->hash_arr[i]->hash, hash->hash_arr[i]->hash, btrfs_hash_sizes[algo]);
@@ -522,7 +526,6 @@ out:
 int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
 		     struct btrfs_dedupe_hash *hash)
 {
-	{ PDebug("1");}
 	struct btrfs_dedupe_info *dedupe_info = fs_info->dedupe_info;
 
 	if (!fs_info->dedupe_enabled || !hash)
@@ -537,7 +540,7 @@ int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
 	/* ignore old hash */
 	//if (dedupe_info->blocksize != hash->hash_arr[0]->num_bytes)
 	//	return 0;
-
+{ PDebug("2");}
 	if (dedupe_info->backend == BTRFS_DEDUPE_BACKEND_INMEMORY)
 		return inmem_add(dedupe_info, hash);
 	return -EINVAL;
@@ -733,7 +736,7 @@ inmem_search_hash(struct btrfs_dedupe_info *dedupe_info, struct btrfs_dedupe_has
 				hash->bytenr = entry->bytenr;
 				hash->num_bytes = entry->num_bytes;
 
-				ret=1;
+				ret=i+1;
 				goto ed;
 			}
 		}
@@ -807,8 +810,8 @@ again:
 		goto out;
 	}
 
-	bytenr = hash->hash_arr[0]->bytenr;
-	num_bytes = hash->hash_arr[0]->num_bytes;
+	bytenr = hash->hash_arr[found_hash-1]->bytenr;
+	num_bytes = hash->hash_arr[found_hash-1]->num_bytes;
 
 	btrfs_init_delayed_ref_head(insert_head, insert_qrecord, bytenr,
 			num_bytes, ref_root, 0, BTRFS_ADD_DELAYED_REF, true,
@@ -848,8 +851,8 @@ again:
 
 		/* add_delayed_data_ref_locked will free unused memory */
 		free_insert = 0;
-		// hash->bytenr = bytenr;
-		// hash->num_bytes = num_bytes;
+	//	hash->bytenr = bytenr;
+		//hash->num_bytes = num_bytes;
 		ret = 1;
 		goto out;
 	}
@@ -861,6 +864,7 @@ again:
 	mutex_unlock(&dedupe_info->lock);
 	ret = btrfs_delayed_ref_lock(delayed_refs, head);
 	spin_unlock(&delayed_refs->lock);
+
 	if (ret == -EAGAIN)
 		goto again;
 
