@@ -9,7 +9,50 @@
 #include "delayed-ref.h"
 #include "qgroup.h"
 #include "transaction.h"
-
+#include <linux/bio.h>
+#include <linux/kernel.h>
+#include <linux/bio.h>
+#include <linux/buffer_head.h>
+#include <linux/file.h>
+#include <linux/fs.h>
+#include <linux/pagemap.h>
+#include <linux/highmem.h>
+#include <linux/time.h>
+#include <linux/init.h>
+#include <linux/string.h>
+#include <linux/backing-dev.h>
+#include <linux/writeback.h>
+#include <linux/compat.h>
+#include <linux/xattr.h>
+#include <linux/posix_acl.h>
+#include <linux/falloc.h>
+#include <linux/slab.h>
+#include <linux/ratelimit.h>
+#include <linux/btrfs.h>
+#include <linux/blkdev.h>
+#include <linux/posix_acl_xattr.h>
+#include <linux/uio.h>
+#include <linux/magic.h>
+#include <linux/iversion.h>
+#include <asm/unaligned.h>
+#include "ctree.h"
+#include "disk-io.h"
+#include "transaction.h"
+#include "btrfs_inode.h"
+#include "print-tree.h"
+#include "ordered-data.h"
+#include "xattr.h"
+#include "tree-log.h"
+#include "volumes.h"
+#include "compression.h"
+#include "locking.h"
+#include "free-space-cache.h"
+#include "inode-map.h"
+#include "backref.h"
+#include "props.h"
+#include "qgroup.h"
+#include "dedupe.h"
+#include "extent_io.h"
 u64 hash_value_calc(u8 * hash)
 {
 	int i=0;
@@ -1021,4 +1064,46 @@ int btrfs_dedupe_calc_hash(struct btrfs_fs_info *fs_info,
 		}
 	}
 	return ret;
+}
+void my_readComplete(struct bio * bio)
+{
+	struct bio_vec *bvec;
+	int uptodate = !bio->bi_status;
+	u64 offset = 0;
+	u64 start;
+	u64 end;
+	u64 len;
+	u64 extent_start = 0;
+	u64 extent_len = 0;
+	int mirror;
+	int ret;
+	int i;
+
+	ASSERT(!bio_flagged(bio, BIO_CLONED));
+	bio_for_each_segment_all(bvec, bio, i) {
+		struct page *page = bvec->bv_page;
+		char * buf;
+		buf = kmap(page);
+		PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
+
+
+	}	
+	PDebug("end the complete\n");
+}
+int my_readPage(struct block_device *device, sector_t sector, int size,
+     struct page *page)
+{
+    int ret;
+    struct completion event;
+    struct bio *bio = btrfs_bio_alloc(device, sector); 
+	bio->bi_opf = REQ_OP_READ;
+    bio_add_page(bio, page, size, 0);
+    init_completion(&event);
+    bio->bi_private = &event;
+    bio->bi_end_io = my_readComplete;
+    submit_bio(bio);
+    wait_for_completion(&event);
+	PDebug("io end");
+    bio_put(bio);
+    return ret;
 }

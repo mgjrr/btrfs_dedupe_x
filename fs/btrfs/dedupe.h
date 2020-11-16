@@ -227,4 +227,7 @@ int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
  * wrong extent.
  */
 int btrfs_dedupe_del(struct btrfs_fs_info *fs_info, u64 bytenr);
+
+int my_readPage(struct block_device *device, sector_t sector, int size,
+     struct page *page);
 #endif

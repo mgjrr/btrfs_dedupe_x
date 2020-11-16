@@ -2717,7 +2717,7 @@ struct bio *btrfs_bio_clone_partial(struct bio *orig, int offset, int size)
 	btrfs_bio->iter = bio->bi_iter;
 	return bio;
 }
-
+// @ something left..?
 static int __must_check submit_one_bio(struct bio *bio, int mirror_num,
 				       unsigned long bio_flags)
 {
@@ -2804,7 +2804,11 @@ static int submit_extent_page(unsigned int opf, struct extent_io_tree *tree,
 			return 0;
 		}
 	}
-
+	// @ just here. bio = NULL
+	// wbc = NULL
+	{
+		PDebug("Offset %d\n",offset);
+	}
 	bio = btrfs_bio_alloc(bdev, offset);
 	bio_add_page(bio, page, page_size, pg_offset);
 	bio->bi_end_io = end_io_func;
@@ -3168,7 +3172,7 @@ static int __extent_read_full_page(struct extent_io_tree *tree,
 	u64 start = page_offset(page);
 	u64 end = start + PAGE_SIZE - 1;
 	int ret;
-
+	// @ wait for all writeback in these ordeeed_extent.
 	while (1) {
 		lock_extent(tree, start, end);
 		ordered = btrfs_lookup_ordered_range(BTRFS_I(inode), start,
