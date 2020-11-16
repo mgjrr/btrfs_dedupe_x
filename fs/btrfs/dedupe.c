@@ -1078,16 +1078,17 @@ void my_readComplete(struct bio * bio)
 	int mirror;
 	int ret;
 	int i;
-
+	struct completion * event = bio->bi_private; 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
-	bio_for_each_segment_all(bvec, bio, i) {
-		struct page *page = bvec->bv_page;
-		char * buf;
-		buf = kmap(page);
-		PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
+	// bio_for_each_segment_all(bvec, bio, i) {
+	// 	struct page *page = bvec->bv_page;
+	// 	char * buf;
+	// 	buf = kmap(page);
+	// 	PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
 
 
-	}	
+	// }
+	complete(event);	
 	PDebug("end the complete\n");
 }
 int my_readPage(struct block_device *device, sector_t sector, int size,
