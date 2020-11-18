@@ -1108,3 +1108,119 @@ int my_readPage(struct block_device *device, sector_t sector, int size,
     bio_put(bio);
     return ret;
 }
+struct burst * burst_gen(char * origin,char * addin,u64 lth)
+{
+	struct burst *burst;
+	burst = kzalloc(sizeof(struct burst),GFP_NOFS);
+	int hd;
+	int tl;
+	for(hd = 0;hd<lth;++hd)
+	{
+		if(origin[hd]!=addin[hd])
+		{
+			break;
+		}
+	}
+	for(tl = lth-1;tl>-1;--tl)
+	{
+		if(origin[tl]!=addin[tl])
+		{
+			break;
+		}
+	}
+	if(WARN_ON(hd>tl))
+		return NULL;
+	burst->diff = kzalloc((tl-hd+1)*sizeof(char),GFP_NOFS);
+	memcpy(burst->diff,addin+hd,tl-hd+1);
+	burst->start = hd;
+	burst->end = tl+1;
+	return burst;
+}
+int burst_range_gen(struct inode *inode,u64 start,u64 end,u64 bytenr)
+{
+	struct block_device *bdev = lookup_bdev("/dev/sdc");
+	struct page *page_origin = alloc_page(GFP_KERNEL);
+	struct page *page_addin = alloc_page(GFP_KERNEL);
+	int i;
+	u64 len;
+	len = end-start+1;
+
+	char * origin;
+	char * addin;
+	if(WARN_ON(len%PAGE_SIZE))
+		return 1;
+	for(i=0;i<len%PAGE_SIZE;++i)
+	{
+		my_readPage(bdev,bytenr+i*PAGE_SIZE,PAGE_SIZE,page_origin);
+		origin = kmap(page_origin);
+		page_addin = find_get_page(inode->i_mapping,(start>>PAGE_SHIFT)+i);
+		addin = kmap(page_addin);
+		if (WARN_ON(!page_origin||!page_addin)) 
+			return -ENOENT;
+		struct burst * tb;
+		tb = burst_gen(origin,addin,PAGE_SIZE);
+		if (WARN_ON(!tb))
+			return -ENOENT;
+		tb->offset = start+i*PAGE_SIZE;
+		int ret = btrfs_burst_add(BTRFS_I(inode),tb);
+		if(ret) PDebug("duplication in burst tree.");
+	}
+	return 0;
+}
+int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst)
+{
+	if(!btrfs_inode->burst_inited==19990317)
+	{
+		btrfs_inode->burst_root = RB_ROOT;
+		btrfs_inode->burst_inited = 19990317;
+	}
+	int ret = 0;
+	struct rb_node **p = &(btrfs_inode->burst_root.rb_node);
+	struct rb_node *parent = NULL;
+	struct burst *entry = NULL;
+	{
+		// PDebug("Insert into %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
+	}
+	while (*p) {
+		parent = *p;
+		entry = rb_entry(parent, struct burst, burst_node);
+		if (burst->offset<entry->offset)
+			p = &(*p)->rb_left;
+		else if (burst->offset>entry->offset)
+			p = &(*p)->rb_right;
+		else
+		{
+			ret += 1;
+			break;
+		}
+	}
+	rb_link_node(&burst->burst_node, parent, p);
+	rb_insert_color(&burst->burst_node, &btrfs_inode->burst_root);
+	return ret;
+}
+int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst* burst)
+{
+	int ret = 0;
+	if(!btrfs_inode->burst_inited==19990317)
+		return 1;
+	struct rb_node **p = &(btrfs_inode->burst_root.rb_node);
+	struct rb_node *parent = NULL;
+	struct burst *entry = NULL;
+	{
+		// PDebug("Insert into %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
+	}
+	while (*p) {
+		parent = *p;
+		entry = rb_entry(parent, struct burst, burst_node);
+		if (burst->offset<entry->offset)
+			p = &(*p)->rb_left;
+		else if (burst->offset>entry->offset)
+			p = &(*p)->rb_right;
+		else
+		{
+			burst = entry;
+			return 0;
+		}
+	}
+	return 1;
+}

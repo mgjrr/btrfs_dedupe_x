@@ -1296,60 +1296,13 @@ static noinline int cow_file_range(struct inode *inode,
 				if(i>0)
 				{
 					int tret;
-					
-					bdev = lookup_bdev("/dev/sdc");
-					struct page *page = alloc_page(GFP_KERNEL);
-					tret = my_readPage(bdev,ins.objectid,PAGE_SIZE,page);
-					// bio->bi_bdev = bdev;
-					// bio->bi_sector = ins.objectid;
-					// bio_add_page(bio, page, size, 0);
-					// init_completion(&event);i
-					// bio->bi_private = &event;
-					// bio->bi_end_io = readComplete;
-					// submit_bio(READ | REQ_SYNC, bio);
-					// wait_for_completion(&event);
-					// ret = test_bit(BIO_UPTODATE, &bio->bi_flags);
-					// bio_put(bio);
-
-					// PDebug("head hash hit.");
-					// bdev = lookup_bdev("/dev/sdc");
-					// bio = btrfs_bio_alloc(bdev, 1);
-					// PDebug("bdev,bio %p %p\n",bdev,bio);
-					// struct page *page = alloc_page(GFP_USER);
-					// bio_add_page(bio,page,4096,0);
-					// bio->bi_end_io = end_bio_extent_readpage;
-					// bio->bi_opf = REQ_OP_READ;
-					// bio->bi_private = &BTRFS_I(inode)->io_tree;
-					// ret = submit_one_bio(bio, 0,0);
-					// PDebug("ret %d\n",ret);
+					PDebug("hit and check var\n");
+					PDebug("start %u,end %u,del %u,nr %u",start,end,delalloc_end,nr_written);
+					burst_range_gen(inode,start,end,ins.objectid);
 
 					
-					// // char * cd;
-					// buf = kmap(page);
-					// PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
-					// buf = kzalloc(1300,GFP_NOFS);
-					// memset(buf,0,sizeof(1300));
-					// struct iovec iov = { .iov_base = buf, .iov_len = 1200 };
-					// struct iov_iter iter;
-					// iov_iter_init(&iter, READ, &iov, 1, 1300);
-					// int nums = copy_page_to_iter(page, 0, 1200, &iter);
-					// PDebug("cp nums: %d\n",nums);
-					
-					// kfree(buf);
 
-					// read_extent_buffer(eb,buf,0,1200);
-					// PDebug("read: %lld char[0]: %c char[1]: %c char[2]: %c\n",ins.objectid,buf[0],buf[1023],buf[1024]);
-					// PDebug("read %c end?\n",buf[1]);
-					// eb = btrfs_find_create_tree_block(fs_info,ins.objectid);
-					// if(WARN_ON(!eb))
-					// {
-					// 	PDebug("no eb..");
-					// }
-					// else
-					// {
-						// PDebug("ebp: %p\n",eb);
-						
-					// }// burst_gen();
+
 				}
 				break;
 			}

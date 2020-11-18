@@ -23,7 +23,7 @@
 #include "rcu-string.h"
 #include "backref.h"
 #include "disk-io.h"
-
+#include "dedupe.h"
 static struct kmem_cache *extent_state_cache;
 static struct kmem_cache *extent_buffer_cache;
 static struct bio_set btrfs_bioset;
@@ -2619,6 +2619,21 @@ readpage_ok:
 			SetPageError(page);
 		}
 		unlock_page(page);
+		if(fs_info->dedupe_enabled)
+		{
+			// @ here page_offset is just the offset in file.
+			struct burst *burst = NULL;
+			int t_page_offset = page_offset(page);
+			int tret;
+			tret = btrfs_burst_search(BTRFS_I(inode),t_page_offset,burst);
+			if(tret)
+			{
+				PDebug("Search fail\n");
+			}
+			PDebug("found burst s:%d e:%d o:%d",burst->start,burst->end,burst->offset);
+			// PDebug("routine readpage, offset %u index %u offset %u and length %u",
+					// offset,page_offset(page),bvec->bv_offset, bvec->bv_len);
+		}
 		offset += len;
 
 		if (unlikely(!uptodate)) {
@@ -2642,6 +2657,7 @@ readpage_ok:
 			extent_start = start;
 			extent_len = end + 1 - start;
 		}
+		
 	}
 
 	if (extent_len)

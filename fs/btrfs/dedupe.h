@@ -9,6 +9,13 @@
 #include <crypto/hash.h>
 #include "btrfs_inode.h"
  
+// #define PRINT_ARG(x, y) fprintf(stderr, #x": "y"\t", x);
+// #define VAR_CHECK(...) do{\
+// kprint( ANSI_COLOR_YELLOW "[VAR_CHECK]: %s:%d\t", __FILE__, __LINE__);\
+// MAP(PRINT_ARG, __VA_ARGS__); \
+// printk("\n" ANSI_COLOR_RESET);}while(0)
+
+
 /* 32 bytes for SHA256 */
 static const int btrfs_hash_sizes[] = { 32 };
 
@@ -34,13 +41,16 @@ struct btrfs_dedupe_hash {
 	struct btrfs_dedupe_hash_entry * hash_arr[3];
 };
 
-
+struct burst{
+	char * diff;
+	struct rb_node burst_node;
+	u64 offset;
+	u64 start;
+	u64 end;
+};
 
 u64 hash_value_calc(u8 * hash);
-struct burst{
-	char * ptr;
-	u64 len;
-};
+
 struct btrfs_dedupe_info {
 	/* dedupe blocksize */
 	u64 blocksize;
@@ -68,7 +78,6 @@ struct btrfs_dedupe_info {
 	u64 current_nr[3];
 };
 
-char * burst_gen(struct page *);
 
 static inline u64 btrfs_dedupe_blocksize(struct btrfs_inode *inode)
 {
@@ -228,6 +237,10 @@ int btrfs_dedupe_add(struct btrfs_fs_info *fs_info,
  */
 int btrfs_dedupe_del(struct btrfs_fs_info *fs_info, u64 bytenr);
 
+struct burst * burst_gen(char * origin,char * addin,u64 lth);
+int burst_range_gen(struct inode *inode,u64 start,u64 end,u64 bytenr);
 int my_readPage(struct block_device *device, sector_t sector, int size,
      struct page *page);
+int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst);
+int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst* burst);
 #endif

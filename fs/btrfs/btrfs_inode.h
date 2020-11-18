@@ -49,6 +49,8 @@ struct btrfs_inode {
 	spinlock_t lock;
 
 	/* the extent_tree has caches of all the extent mappings to disk */
+	int burst_inited;
+	struct rb_root burst_root;
 	struct extent_map_tree extent_tree;
 
 	/* the io_tree does range state (DIRTY, LOCKED etc) */
