@@ -240,8 +240,10 @@ int btrfs_dedupe_del(struct btrfs_fs_info *fs_info, u64 bytenr);
 
 struct burst * burst_gen(char * origin,char * addin,u64 lth);
 int burst_range_gen(struct inode *inode,u64 start,u64 end,u64 bytenr);
-int my_readPage(struct block_device *device, sector_t sector, int size,
-     struct page *page);
+// int my_readPage(struct block_device *device, sector_t sector, int size,
+    //  struct page *page);
+// int __must_check submit_one_bio_X(struct bio *bio, int mirror_num,
+				    //    unsigned long bio_flags);
 int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst);
 int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst** burst);
 struct burst_record{

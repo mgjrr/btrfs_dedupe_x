@@ -6137,7 +6137,7 @@ static void submit_stripe_bio(struct btrfs_bio *bbio, struct bio *bio,
 	bio_set_dev(bio, dev->bdev);
 
 	btrfs_bio_counter_inc_noblocked(fs_info);
-
+	//PDebug("physical %d async %d\n",physical,async);
 	if (async)
 		btrfs_schedule_bio(dev, bio);
 	else

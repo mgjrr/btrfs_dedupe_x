@@ -13,6 +13,22 @@
 #include <linux/pagevec.h>
 #include <linux/prefetch.h>
 #include <linux/cleancache.h>
+#include <linux/slab.h>
+#include <linux/stat.h>
+#include <linux/sched/xacct.h>
+#include <linux/fcntl.h>
+#include <linux/file.h>
+#include <linux/uio.h>
+#include <linux/fsnotify.h>
+#include <linux/security.h>
+#include <linux/export.h>
+#include <linux/syscalls.h>
+#include <linux/pagemap.h>
+#include <linux/splice.h>
+#include <linux/compat.h>
+#include <linux/mount.h>
+#include <linux/fs.h>
+
 #include "extent_io.h"
 #include "extent_map.h"
 #include "ctree.h"
@@ -2522,6 +2538,7 @@ static void end_bio_extent_readpage(struct bio *bio)
 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, i) {
+		PDebug("PAGE: %d\n",i);
 		struct page *page = bvec->bv_page;
 		struct inode *inode = page->mapping->host;
 		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
@@ -2618,7 +2635,10 @@ readpage_ok:
 			ClearPageUptodate(page);
 			SetPageError(page);
 		}
-		if(fs_info->dedupe_enabled)
+		
+		unlock_page(page);
+
+if(fs_info->dedupe_enabled)
 		{
 			// @ here page_offset is just the offset in file.
 			struct burst *burst = NULL;
@@ -2635,16 +2655,29 @@ readpage_ok:
 			else
 			{
 				PDebug("Search suc\n");
-				char * tmp = burst->diff;
-				PDebug("%c%c%c",tmp[0],tmp[1],tmp[2]);
+
+				char * buf = burst->diff;
+				PDebug("%c%c%c",buf[0],buf[1],buf[2]);
+
 				PDebug("found burst s:%d e:%d o:%d\n",burst->start,burst->end,burst->offset);
+				struct iovec iov = { .iov_base = buf, .iov_len = burst->end-burst->start };
+				struct iov_iter iter;
+				iov_iter_init(&iter, WRITE, &iov, 1, burst->end-burst->start);
+				copy_page_from_iter(page, burst->start, burst->end-burst->start,&iter);
+				char * pa = kmap(page);
+				PDebug("PA: %p %c %c %c \n",pa,*(pa),*(pa+1),*(pa+2));
+				// PDebug("SEE %d %c %c %c",burst->start+burst->offset,pa[burst->start+burst->offset],pa[burst->start+burst->offset+1],pa[burst->start+burst->offset+2]);
+
+				// memcpy(pa+burst->start+burst->offset,burst->diff,burst->end-burst->start);
+				// *(pa) = 1;
+				// PDebug("%d %c %c %c",burst->start+burst->offset,pa[burst->start+burst->offset],pa[burst->start+burst->offset+1],pa[burst->start+burst->offset+2]);
+				PDebug("PAA: %p %c %c %c \n",pa,*(pa),*(pa+1),*(pa+2));
+				kunmap(page);
 				// PDebug("routine readpage, offset %u index %u offset %u and length %u",
 					// offset,page_offset(page),bvec->bv_offset, bvec->bv_len);
 			}
 			
 		}
-		unlock_page(page);
-
 		offset += len;
 
 		if (unlikely(!uptodate)) {
@@ -2834,7 +2867,7 @@ static int submit_extent_page(unsigned int opf, struct extent_io_tree *tree,
 	// @ just here. bio = NULL
 	// wbc = NULL
 	{
-		PDebug("Offset %d %d %d\n",offset,opf,pg_offset);
+		// PDebug("Offset %d %d %d\n",offset,opf,pg_offset);
 	}
 	bio = btrfs_bio_alloc(bdev, offset);
 	bio_add_page(bio, page, page_size, pg_offset);

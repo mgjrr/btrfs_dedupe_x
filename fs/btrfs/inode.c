@@ -972,235 +972,6 @@ static u64 get_extent_allocation_hint(struct inode *inode, u64 start,
 
 	return alloc_hint;
 }
-static int bio_readpage_error(struct bio *failed_bio, u64 phy_offset,
-			      struct page *page, u64 start, u64 end,
-			      int failed_mirror)
-{
-	struct io_failure_record *failrec;
-	struct inode *inode = page->mapping->host;
-	struct extent_io_tree *tree = &BTRFS_I(inode)->io_tree;
-	struct extent_io_tree *failure_tree = &BTRFS_I(inode)->io_failure_tree;
-	struct bio *bio;
-	int read_mode = 0;
-	blk_status_t status;
-	int ret;
-	unsigned failed_bio_pages = bio_pages_all(failed_bio);
-
-	BUG_ON(bio_op(failed_bio) == REQ_OP_WRITE);
-
-	ret = btrfs_get_io_failure_record(inode, start, end, &failrec);
-	if (ret)
-		return ret;
-
-	if (!btrfs_check_repairable(inode, failed_bio_pages, failrec,
-				    failed_mirror)) {
-		free_io_failure(failure_tree, tree, failrec);
-		return -EIO;
-	}
-
-	if (failed_bio_pages > 1)
-		read_mode |= REQ_FAILFAST_DEV;
-
-	phy_offset >>= inode->i_sb->s_blocksize_bits;
-	bio = btrfs_create_repair_bio(inode, failed_bio, failrec, page,
-				      start - page_offset(page),
-				      (int)phy_offset, failed_bio->bi_end_io,
-				      NULL);
-	bio->bi_opf = REQ_OP_READ | read_mode;
-
-	btrfs_debug(btrfs_sb(inode->i_sb),
-		"Repair Read Error: submitting new read[%#x] to this_mirror=%d, in_validation=%d",
-		read_mode, failrec->this_mirror, failrec->in_validation);
-
-	status = tree->ops->submit_bio_hook(tree->private_data, bio, failrec->this_mirror,
-					 failrec->bio_flags, 0);
-	if (status) {
-		free_io_failure(failure_tree, tree, failrec);
-		bio_put(bio);
-		ret = blk_status_to_errno(status);
-	}
-
-	return ret;
-}
-static void
-endio_readpage_release_extent(struct extent_io_tree *tree, u64 start, u64 len,
-			      int uptodate)
-{
-	struct extent_state *cached = NULL;
-	u64 end = start + len - 1;
-
-	if (uptodate && tree->track_uptodate)
-		set_extent_uptodate(tree, start, end, &cached, GFP_ATOMIC);
-	unlock_extent_cached_atomic(tree, start, end, &cached);
-}
-static void end_bio_extent_readpage(struct bio *bio)
-{
-	struct bio_vec *bvec;
-	int uptodate = !bio->bi_status;
-	struct btrfs_io_bio *io_bio = btrfs_io_bio(bio);
-	struct extent_io_tree *tree, *failure_tree;
-	u64 offset = 0;
-	u64 start;
-	u64 end;
-	u64 len;
-	u64 extent_start = 0;
-	u64 extent_len = 0;
-	int mirror;
-	int ret;
-	int i;
-
-	ASSERT(!bio_flagged(bio, BIO_CLONED));
-	bio_for_each_segment_all(bvec, bio, i) {
-		struct page *page = bvec->bv_page;
-		struct inode *inode = page->mapping->host;
-		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
-
-		btrfs_debug(fs_info,
-			"end_bio_extent_readpage: bi_sector=%llu, err=%d, mirror=%u",
-			(u64)bio->bi_iter.bi_sector, bio->bi_status,
-			io_bio->mirror_num);
-		tree = &BTRFS_I(inode)->io_tree;
-		failure_tree = &BTRFS_I(inode)->io_failure_tree;
-
-		/* We always issue full-page reads, but if some block
-		 * in a page fails to read, blk_update_request() will
-		 * advance bv_offset and adjust bv_len to compensate.
-		 * Print a warning for nonzero offsets, and an error
-		 * if they don't add up to a full page.  */
-		if (bvec->bv_offset || bvec->bv_len != PAGE_SIZE) {
-			if (bvec->bv_offset + bvec->bv_len != PAGE_SIZE)
-				btrfs_err(fs_info,
-					"partial page read in btrfs with offset %u and length %u",
-					bvec->bv_offset, bvec->bv_len);
-			else
-				btrfs_info(fs_info,
-					"incomplete page read in btrfs with offset %u and length %u",
-					bvec->bv_offset, bvec->bv_len);
-		}
-
-		start = page_offset(page);
-		end = start + bvec->bv_offset + bvec->bv_len - 1;
-		len = bvec->bv_len;
-
-		mirror = io_bio->mirror_num;
-		if (likely(uptodate && tree->ops)) {
-			ret = tree->ops->readpage_end_io_hook(io_bio, offset,
-							      page, start, end,
-							      mirror);
-			if (ret)
-				uptodate = 0;
-			else
-				clean_io_failure(BTRFS_I(inode)->root->fs_info,
-						 failure_tree, tree, start,
-						 page,
-						 btrfs_ino(BTRFS_I(inode)), 0);
-		}
-
-		if (likely(uptodate))
-			goto readpage_ok;
-
-		if (tree->ops) {
-			ret = tree->ops->readpage_io_failed_hook(page, mirror);
-			if (ret == -EAGAIN) {
-				/*
-				 * Data inode's readpage_io_failed_hook() always
-				 * returns -EAGAIN.
-				 *
-				 * The generic bio_readpage_error handles errors
-				 * the following way: If possible, new read
-				 * requests are created and submitted and will
-				 * end up in end_bio_extent_readpage as well (if
-				 * we're lucky, not in the !uptodate case). In
-				 * that case it returns 0 and we just go on with
-				 * the next page in our bio. If it can't handle
-				 * the error it will return -EIO and we remain
-				 * responsible for that page.
-				 */
-				ret = bio_readpage_error(bio, offset, page,
-							 start, end, mirror);
-				if (ret == 0) {
-					uptodate = !bio->bi_status;
-					offset += len;
-					continue;
-				}
-			}
-
-			/*
-			 * metadata's readpage_io_failed_hook() always returns
-			 * -EIO and fixes nothing.  -EIO is also returned if
-			 * data inode error could not be fixed.
-			 */
-			ASSERT(ret == -EIO);
-		}
-readpage_ok:
-		if (likely(uptodate)) {
-			loff_t i_size = i_size_read(inode);
-			pgoff_t end_index = i_size >> PAGE_SHIFT;
-			unsigned off;
-
-			/* Zero out the end if this page straddles i_size */
-			off = i_size & (PAGE_SIZE-1);
-			if (page->index == end_index && off)
-				zero_user_segment(page, off, PAGE_SIZE);
-			SetPageUptodate(page);
-		} else {
-			ClearPageUptodate(page);
-			SetPageError(page);
-		}
-		unlock_page(page);
-		offset += len;
-
-		if (unlikely(!uptodate)) {
-			if (extent_len) {
-				endio_readpage_release_extent(tree,
-							      extent_start,
-							      extent_len, 1);
-				extent_start = 0;
-				extent_len = 0;
-			}
-			endio_readpage_release_extent(tree, start,
-						      end - start + 1, 0);
-		} else if (!extent_len) {
-			extent_start = start;
-			extent_len = end + 1 - start;
-		} else if (extent_start + extent_len == start) {
-			extent_len += end + 1 - start;
-		} else {
-			endio_readpage_release_extent(tree, extent_start,
-						      extent_len, uptodate);
-			extent_start = start;
-			extent_len = end + 1 - start;
-		}
-	}
-
-	if (extent_len)
-		endio_readpage_release_extent(tree, extent_start, extent_len,
-					      uptodate);
-	if (io_bio->end_io)
-		io_bio->end_io(io_bio, blk_status_to_errno(bio->bi_status));
-	bio_put(bio);
-}
-static int __must_check submit_one_bio(struct bio *bio, int mirror_num,
-				       unsigned long bio_flags)
-{
-	blk_status_t ret = 0;
-	struct bio_vec *bvec = bio_last_bvec_all(bio);
-	struct page *page = bvec->bv_page;
-	struct extent_io_tree *tree = bio->bi_private;
-	u64 start;
-
-	start = page_offset(page) + bvec->bv_offset;
-
-	bio->bi_private = NULL;
-
-	if (tree->ops)
-		ret = tree->ops->submit_bio_hook(tree->private_data, bio,
-					   mirror_num, bio_flags, start);
-	else
-		submit_bio(bio);
-
-	return blk_status_to_errno(ret);
-}
 /*
  * when extent_io.c finds a delayed allocation range in the file,
  * the call backs end up in this code.  The basic idea is to
@@ -1295,17 +1066,25 @@ static noinline int cow_file_range(struct inode *inode,
 				}
 				if(i>0)
 				{
-					int tret;
-					PDebug("hit and check var\n");
-					PDebug("start %u,end %u %d\n",start,end,ins.objectid);
-					bdev = lookup_bdev("/dev/sdc");
-					struct page *page = alloc_page(GFP_KERNEL);
-					PDebug("page to save %p\n",page);
-					tret = my_readPage(bdev,ins.objectid,PAGE_SIZE,page);
-					// only head or tail
-					// if(!burst_record_insert(fs_info,ins.objectid))
-						// burst_range_gen(inode,start,end,ins.objectid);
+					// int tret;
+					// PDebug("hit and check var\n");
+					// PDebug("start %u,end %u %d\n",start,end,ins.objectid);
+					// bdev = lookup_bdev("/dev/sdc");
+					// struct page *page = alloc_page(GFP_KERNEL);
+					// page->mapping = inode->i_mapping;
+					// bio = btrfs_bio_alloc(bdev, ins.objectid);
+					// bio_add_page(bio, page, PAGE_SIZE, 0);
+					// bio->bi_end_io = end_bio_extent_readpage;
+					// bio->bi_private = &BTRFS_I(inode)->io_tree;
+					// bio->bi_opf = REQ_OP_READ;
+					// submit_one_bio(bio,0,0);
 
+					// PDebug("page to save %p\n",page);
+					// tret = my_readPage(bdev,ins.objectid,PAGE_SIZE,page);
+					// only head or tail
+					if(!burst_record_insert(fs_info,ins.objectid))
+						burst_range_gen(inode,start,end,ins.objectid);
+					
 					
 
 
