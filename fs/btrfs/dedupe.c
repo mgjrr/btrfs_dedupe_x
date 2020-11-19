@@ -182,6 +182,7 @@ init_dedupe_info(struct btrfs_ioctl_dedupe_args *dargs)
 		dedupe_info->current_nr[i] = 0;
 	}
 	dedupe_info->bytenr_root = RB_ROOT;
+	dedupe_info->bursted_root = RB_ROOT;
 	dedupe_info->head_len = 1024;
 
 	mutex_init(&dedupe_info->lock);
@@ -525,7 +526,7 @@ static int inmem_add(struct btrfs_dedupe_info *dedupe_info,
 
 	ret = inmem_insert_bytenr(&dedupe_info->bytenr_root, ihash);
 	if (ret > 0) {
-		WARN_ON(ret>0);
+		// WARN_ON(ret>0);
 		kfree(ihash);
 		ret = 0;
 		goto out;
@@ -1080,14 +1081,15 @@ void my_readComplete(struct bio * bio)
 	int i;
 	struct completion * event = bio->bi_private; 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
-	// bio_for_each_segment_all(bvec, bio, i) {
-	// 	struct page *page = bvec->bv_page;
-	// 	char * buf;
-	// 	buf = kmap(page);
-	// 	PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
+	bio_for_each_segment_all(bvec, bio, i) {
+		struct page *page = bvec->bv_page;
+		PDebug("page to save 3 %p\n",page);
+		char * buf;
+		buf = kmap(page);
+		PDebug(" new : %c-%c-%c-%c-%c-%c\n",buf[0],buf[1],buf[2],buf[1023],buf[1024],buf[1025]);
+		// kunmap(page);
 
-
-	// }
+	}
 	complete(event);	
 	PDebug("end the complete\n");
 }
@@ -1098,7 +1100,8 @@ int my_readPage(struct block_device *device, sector_t sector, int size,
     struct completion event;
     struct bio *bio = btrfs_bio_alloc(device, sector); 
 	bio->bi_opf = REQ_OP_READ;
-    bio_add_page(bio, page, size, 0);
+	PDebug("page to save 2 %p\n",page);
+	bio_add_page(bio, page, size, 0);
     init_completion(&event);
     bio->bi_private = &event;
     bio->bi_end_io = my_readComplete;
@@ -1116,6 +1119,7 @@ struct burst * burst_gen(char * origin,char * addin,u64 lth)
 	int tl;
 	for(hd = 0;hd<lth;++hd)
 	{
+		PDebug("hd: %d %c %c\n",hd,origin[hd],addin[hd]);
 		if(origin[hd]!=addin[hd])
 		{
 			break;
@@ -1138,52 +1142,70 @@ struct burst * burst_gen(char * origin,char * addin,u64 lth)
 }
 int burst_range_gen(struct inode *inode,u64 start,u64 end,u64 bytenr)
 {
+	// PDebug("gen begin\n");
 	struct block_device *bdev = lookup_bdev("/dev/sdc");
 	struct page *page_origin = alloc_page(GFP_KERNEL);
 	struct page *page_addin = alloc_page(GFP_KERNEL);
 	int i;
 	u64 len;
 	len = end-start+1;
-
+	// PDebug("gen begin +\n");
 	char * origin;
 	char * addin;
 	if(WARN_ON(len%PAGE_SIZE))
 		return 1;
-	for(i=0;i<len%PAGE_SIZE;++i)
+	// PDebug("gen begin %d %d\n",len,len%PAGE_SIZE);
+	for(i=0;i<len/PAGE_SIZE;++i)
 	{
+		PDebug("gen begin %d %d\n",i,bytenr+i*PAGE_SIZE);
 		my_readPage(bdev,bytenr+i*PAGE_SIZE,PAGE_SIZE,page_origin);
 		origin = kmap(page_origin);
+		{
+			PDebug(" new : %c-%c-%c-%c-%c-%c\n",origin[0],origin[1],origin[2],origin[1023],origin[1024],origin[1025]);
+		}
 		page_addin = find_get_page(inode->i_mapping,(start>>PAGE_SHIFT)+i);
 		addin = kmap(page_addin);
 		if (WARN_ON(!page_origin||!page_addin)) 
 			return -ENOENT;
 		struct burst * tb;
 		tb = burst_gen(origin,addin,PAGE_SIZE);
+		kunmap(page_addin);
+		kunmap(page_origin);
 		if (WARN_ON(!tb))
 			return -ENOENT;
 		tb->offset = start+i*PAGE_SIZE;
 		int ret = btrfs_burst_add(BTRFS_I(inode),tb);
 		if(ret) PDebug("duplication in burst tree.");
+		PDebug("burst generated for i:%d, offset in file %d\n",i,tb->offset);
 	}
+	__free_page(page_origin);
+	__free_page(page_addin);
 	return 0;
 }
 int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst)
 {
-	if(!btrfs_inode->burst_inited==19990317)
+	// PDebug("burst add 0\n");
+	if(btrfs_inode->burst_inited!=19990317)
 	{
+		// PDebug("init burst tree");
 		btrfs_inode->burst_root = RB_ROOT;
 		btrfs_inode->burst_inited = 19990317;
 	}
+	// PDebug("burst add 1\n");
 	int ret = 0;
 	struct rb_node **p = &(btrfs_inode->burst_root.rb_node);
 	struct rb_node *parent = NULL;
 	struct burst *entry = NULL;
 	{
-		// PDebug("Insert into %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
+		// PDebug("Search into burst tree, %p offset %d p2root %p\n",burst,burst->offset,p);
+		// if(p) PDebug("root %p\n",*p);
+		// if(*p) PDebug("p2\n",**p);
 	}
 	while (*p) {
 		parent = *p;
 		entry = rb_entry(parent, struct burst, burst_node);
+		// PDebug("entry %p\n",entry);
+		if(WARN_ON(!entry)) break;
 		if (burst->offset<entry->offset)
 			p = &(*p)->rb_left;
 		else if (burst->offset>entry->offset)
@@ -1194,33 +1216,70 @@ int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst)
 			break;
 		}
 	}
+	// PDebug("burst add 2\n");
 	rb_link_node(&burst->burst_node, parent, p);
 	rb_insert_color(&burst->burst_node, &btrfs_inode->burst_root);
+	PDebug("burst added %p %d %d %d\n",burst,burst->start,burst->end,burst->offset);
 	return ret;
 }
-int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst* burst)
+int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst** burst)
 {
 	int ret = 0;
-	if(!btrfs_inode->burst_inited==19990317)
+	if(btrfs_inode->burst_inited!=19990317)
 		return 1;
 	struct rb_node **p = &(btrfs_inode->burst_root.rb_node);
 	struct rb_node *parent = NULL;
 	struct burst *entry = NULL;
 	{
-		// PDebug("Insert into %d tree, bytenr:%d hash:%llu\n",i,hash->bytenr,hash_value_calc(hash->hash));
-	}
+		// PDebug("Search in burst tree, %p offset %d p2root %p\n",burst,burst->offset,p);
+		}
 	while (*p) {
 		parent = *p;
 		entry = rb_entry(parent, struct burst, burst_node);
-		if (burst->offset<entry->offset)
+		if(WARN_ON(!entry)) break;
+		if (offset<entry->offset)
 			p = &(*p)->rb_left;
-		else if (burst->offset>entry->offset)
+		else if (offset>entry->offset)
 			p = &(*p)->rb_right;
 		else
 		{
-			burst = entry;
+			*burst = entry;
+			PDebug("found in search %p %p",*burst,entry);
 			return 0;
 		}
 	}
 	return 1;
+}
+int burst_record_insert(struct btrfs_fs_info *fs_info, u64 bytenr)
+{
+	int ret = 0;
+	struct rb_node **p = &(fs_info->dedupe_info->bursted_root.rb_node);
+	struct rb_node *parent = NULL;
+	struct burst_record *entry = NULL;
+	struct burst_record *br = kzalloc(sizeof(struct burst_record),GFP_NOFS);
+	br->bytenr = bytenr;
+	{
+		// PDebug("Search into burst tree, %p offset %d p2root %p\n",burst,burst->offset,p);
+		// if(p) PDebug("root %p\n",*p);
+		// if(*p) PDebug("p2\n",**p);
+	}
+	while (*p) {
+		parent = *p;
+		entry = rb_entry(parent, struct burst_record, br_node);
+		// PDebug("entry %p\n",entry);
+		if(WARN_ON(!entry)) break;
+		if (br->bytenr<entry->bytenr)
+			p = &(*p)->rb_left;
+		else if (br->bytenr>entry->bytenr)
+			p = &(*p)->rb_right;
+		else
+		{
+			return 1;
+		}
+	}
+	// PDebug("burst add 2\n");
+	rb_link_node(&br->br_node, parent, p);
+	rb_insert_color(&br->br_node, &fs_info->dedupe_info->bursted_root);
+	// PDebug("burst added %d %d %d\n",burst->start,burst->end,burst->offset);
+	return ret;
 }

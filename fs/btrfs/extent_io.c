@@ -2618,22 +2618,33 @@ readpage_ok:
 			ClearPageUptodate(page);
 			SetPageError(page);
 		}
-		unlock_page(page);
 		if(fs_info->dedupe_enabled)
 		{
 			// @ here page_offset is just the offset in file.
 			struct burst *burst = NULL;
+			struct burst **bp = NULL;
 			int t_page_offset = page_offset(page);
+			PDebug("dedup read in offset %d tpo %d\n",offset,t_page_offset);
 			int tret;
-			tret = btrfs_burst_search(BTRFS_I(inode),t_page_offset,burst);
+			tret = btrfs_burst_search(BTRFS_I(inode),t_page_offset,&burst);
+			// @ here ,still a np, what in burst? print it.
 			if(tret)
 			{
 				PDebug("Search fail\n");
 			}
-			PDebug("found burst s:%d e:%d o:%d",burst->start,burst->end,burst->offset);
-			// PDebug("routine readpage, offset %u index %u offset %u and length %u",
+			else
+			{
+				PDebug("Search suc\n");
+				char * tmp = burst->diff;
+				PDebug("%c%c%c",tmp[0],tmp[1],tmp[2]);
+				PDebug("found burst s:%d e:%d o:%d\n",burst->start,burst->end,burst->offset);
+				// PDebug("routine readpage, offset %u index %u offset %u and length %u",
 					// offset,page_offset(page),bvec->bv_offset, bvec->bv_len);
+			}
+			
 		}
+		unlock_page(page);
+
 		offset += len;
 
 		if (unlikely(!uptodate)) {
@@ -2823,7 +2834,7 @@ static int submit_extent_page(unsigned int opf, struct extent_io_tree *tree,
 	// @ just here. bio = NULL
 	// wbc = NULL
 	{
-		PDebug("Offset %d\n",offset);
+		PDebug("Offset %d %d %d\n",offset,opf,pg_offset);
 	}
 	bio = btrfs_bio_alloc(bdev, offset);
 	bio_add_page(bio, page, page_size, pg_offset);

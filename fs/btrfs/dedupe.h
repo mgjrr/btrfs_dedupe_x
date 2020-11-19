@@ -69,6 +69,7 @@ struct btrfs_dedupe_info {
 	/* following members are only used in in-memory backend */
 	struct rb_root hash_root[3];
 	struct rb_root bytenr_root;
+    struct rb_root bursted_root;
 	
 	int head_len;
 	struct burst * burst_arr;
@@ -242,5 +243,10 @@ int burst_range_gen(struct inode *inode,u64 start,u64 end,u64 bytenr);
 int my_readPage(struct block_device *device, sector_t sector, int size,
      struct page *page);
 int btrfs_burst_add(struct btrfs_inode *btrfs_inode, struct burst* burst);
-int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst* burst);
+int btrfs_burst_search(struct btrfs_inode *btrfs_inode, u64 offset, struct burst** burst);
+struct burst_record{
+	u64 bytenr;
+	struct rb_node br_node;
+};
+int burst_record_insert(struct btrfs_fs_info *fs_info, u64 bytenr);
 #endif

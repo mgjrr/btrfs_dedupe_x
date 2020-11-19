@@ -1297,8 +1297,14 @@ static noinline int cow_file_range(struct inode *inode,
 				{
 					int tret;
 					PDebug("hit and check var\n");
-					PDebug("start %u,end %u,del %u,nr %u",start,end,delalloc_end,nr_written);
-					burst_range_gen(inode,start,end,ins.objectid);
+					PDebug("start %u,end %u %d\n",start,end,ins.objectid);
+					bdev = lookup_bdev("/dev/sdc");
+					struct page *page = alloc_page(GFP_KERNEL);
+					PDebug("page to save %p\n",page);
+					tret = my_readPage(bdev,ins.objectid,PAGE_SIZE,page);
+					// only head or tail
+					// if(!burst_record_insert(fs_info,ins.objectid))
+						// burst_range_gen(inode,start,end,ins.objectid);
 
 					
 
@@ -2659,8 +2665,8 @@ static int insert_reserved_file_extent(struct btrfs_trans_handle *trans,
 				       u16 other_encoding, int extent_type,
 				       struct btrfs_dedupe_hash *hash)
 {
-	{ PDebug("1 %p %d\n",hash,btrfs_dedupe_hash_hit(hash));
-	}
+	// { PDebug("1 %p %d\n",hash,btrfs_dedupe_hash_hit(hash));
+	// }
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct btrfs_file_extent_item *fi;
 	struct btrfs_path *path;
@@ -3445,7 +3451,7 @@ static void btrfs_release_delalloc_bytes(struct btrfs_fs_info *fs_info,
  */
 static int btrfs_finish_ordered_io(struct btrfs_ordered_extent *ordered_extent)
 {
-	{ PDebug("1 oe %p h %p\n",ordered_extent,ordered_extent->hash);}
+	// { PDebug("1 oe %p h %p\n",ordered_extent,ordered_extent->hash);}
 	struct inode *inode = ordered_extent->inode;
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 	struct btrfs_root *root = BTRFS_I(inode)->root;
